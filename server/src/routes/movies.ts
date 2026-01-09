@@ -46,52 +46,89 @@ router.get("/random/:count", async (req, res) => {
  * - page (default 1)
  * - pageSize (default 12)
  * - source: all | local | third_party (default all)
+ * - search: string (optional, filters by title contains search)
  */
 router.get("/", async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page ?? 1));
     const pageSize = Math.min(
       50,
-      Math.max(1, Number(req.query.pageSize ?? 12))
+      Math.max(1, Number(req.query.pageSize ?? 25))
     );
+
     const source = String(req.query.source ?? "all");
+    const searchRaw = String(req.query.search ?? "").trim();
+    const search = searchRaw.toLowerCase();
 
     const localMovies = await readLocalMovies();
+
+    // helper: title filter
+    const matchesSearch = (title: string) => {
+      if (!search) return true;
+      return title.toLowerCase().includes(search);
+    };
+
+    // Filter locals first (important: then pagination applies to filtered list)
+    const filteredLocal = localMovies.filter((m) => matchesSearch(m.title));
 
     // Pagination start index
     const start = (page - 1) * pageSize;
 
-    // Only local movies
+    // ---- source=local ----
     if (source === "local") {
-      const items = localMovies.slice(start, start + pageSize);
-      return res.json({ page, pageSize, items, meta: { source: "local" } });
-    }
-
-    // Only third-party movies
-    if (source === "third_party") {
-      const apiMovies = await fetchThirdPartyMoviesPage(page);
-      const items = apiMovies.slice(0, pageSize);
+      const items = filteredLocal.slice(start, start + pageSize);
       return res.json({
         page,
         pageSize,
         items,
-        meta: { source: "third_party" },
+        meta: {
+          source: "local",
+          search: searchRaw,
+          localCount: filteredLocal.length,
+        },
       });
     }
 
-    // source === "all"
-    const localSlice = localMovies.slice(start, start + pageSize);
+    // ---- source=third_party ----
+    if (source === "third_party") {
+      const apiMovies = await fetchThirdPartyMoviesPage(page);
+
+      // We don’t control third-party search, so we filter what we got
+      const filteredApi = apiMovies.filter((m) => matchesSearch(m.title));
+      const items = filteredApi.slice(0, pageSize);
+
+      return res.json({
+        page,
+        pageSize,
+        items,
+        meta: { source: "third_party", search: searchRaw },
+      });
+    }
+
+    // ---- source=all ----
+    // Local first (filtered + paginated), then fill remaining with filtered API results
+    const localSlice = filteredLocal.slice(start, start + pageSize);
     const remaining = pageSize - localSlice.length;
 
     let apiSlice: any[] = [];
     if (remaining > 0) {
       const apiMovies = await fetchThirdPartyMoviesPage(page);
-      apiSlice = apiMovies.slice(0, remaining);
+      const filteredApi = apiMovies.filter((m) => matchesSearch(m.title));
+      apiSlice = filteredApi.slice(0, remaining);
     }
 
     const items = [...localSlice, ...apiSlice];
 
-    return res.json({ page, pageSize, items, meta: { source: "all" } });
+    return res.json({
+      page,
+      pageSize,
+      items,
+      meta: {
+        source: "all",
+        search: searchRaw,
+        localCount: filteredLocal.length,
+      },
+    });
   } catch {
     res.status(500).json({ error: "Failed to load movies" });
   }
