@@ -1,3 +1,5 @@
+// server/src/routes/movies.ts
+//
 // This file defines all /movies HTTP endpoints.
 // It coordinates between:
 // - third-party service (API fetch)
@@ -16,21 +18,6 @@ import {
 } from "../services/store";
 
 const router = Router();
-
-/** ROUTES
- * GET /movies
- * Returns local movies + third-party movies
- */
-router.get("/", async (req, res) => {
-  try {
-    const localMovies = await readLocalMovies();
-    const apiMovies = await fetchThirdPartyMoviesPage(1);
-
-    res.json([...localMovies, ...apiMovies]);
-  } catch {
-    res.status(500).json({ error: "Failed to load movies" });
-  }
-});
 
 /**
  * GET /movies/random/:count
@@ -52,23 +39,61 @@ router.get("/random/:count", async (req, res) => {
 });
 
 /**
- * GET /movies/:id
- * Find a movie by id (local first, then API)
+ * GET /movies
+ * Paginated list of movies
+ *
+ * Query:
+ * - page (default 1)
+ * - pageSize (default 12)
+ * - source: all | local | third_party (default all)
  */
-router.get("/:id", async (req, res) => {
-  const { id } = req.params;
-
+router.get("/", async (req, res) => {
   try {
-    const localMovie = await findLocalMovieById(id);
-    if (localMovie) {
-      return res.json(localMovie);
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const pageSize = Math.min(
+      50,
+      Math.max(1, Number(req.query.pageSize ?? 12))
+    );
+    const source = String(req.query.source ?? "all");
+
+    const localMovies = await readLocalMovies();
+
+    // Pagination start index
+    const start = (page - 1) * pageSize;
+
+    // Only local movies
+    if (source === "local") {
+      const items = localMovies.slice(start, start + pageSize);
+      return res.json({ page, pageSize, items, meta: { source: "local" } });
     }
 
-    // For now, if it's not local, we say not found
-    // (later we could search the API too)
-    res.status(404).json({ error: "Movie not found" });
+    // Only third-party movies
+    if (source === "third_party") {
+      const apiMovies = await fetchThirdPartyMoviesPage(page);
+      const items = apiMovies.slice(0, pageSize);
+      return res.json({
+        page,
+        pageSize,
+        items,
+        meta: { source: "third_party" },
+      });
+    }
+
+    // source === "all"
+    const localSlice = localMovies.slice(start, start + pageSize);
+    const remaining = pageSize - localSlice.length;
+
+    let apiSlice: any[] = [];
+    if (remaining > 0) {
+      const apiMovies = await fetchThirdPartyMoviesPage(page);
+      apiSlice = apiMovies.slice(0, remaining);
+    }
+
+    const items = [...localSlice, ...apiSlice];
+
+    return res.json({ page, pageSize, items, meta: { source: "all" } });
   } catch {
-    res.status(500).json({ error: "Failed to fetch movie" });
+    res.status(500).json({ error: "Failed to load movies" });
   }
 });
 
@@ -88,6 +113,23 @@ router.post("/", async (req, res) => {
     res.status(201).json(movie);
   } catch {
     res.status(500).json({ error: "Failed to create movie" });
+  }
+});
+
+/**
+ * GET /movies/:id
+ * Find a movie by id (local first)
+ */
+router.get("/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const localMovie = await findLocalMovieById(id);
+    if (localMovie) return res.json(localMovie);
+
+    return res.status(404).json({ error: "Movie not found" });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch movie" });
   }
 });
 
