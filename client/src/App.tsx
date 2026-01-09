@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Movie = {
   id: string;
@@ -23,7 +23,7 @@ export default function App() {
   const [pageSize, setPageSize] = useState(12);
   const [source, setSource] = useState<"all" | "local" | "third_party">("all");
 
-  // Search: input vs applied
+  // Search state
   const [searchText, setSearchText] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
 
@@ -31,12 +31,12 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Modal state (Bootstrap modal rendered conditionally)
+  // Modal state
   const [showModal, setShowModal] = useState(false);
 
   // Create form state
   const [newTitle, setNewTitle] = useState("");
-  const [newYear, setNewYear] = useState<string>("");
+  const [newYear, setNewYear] = useState("");
 
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export default function App() {
     [appliedSearch]
   );
 
-  async function loadMovies() {
+  const loadMovies = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -62,11 +62,14 @@ export default function App() {
       }
 
       const res = await fetch(`/movies?${params.toString()}`);
-      if (!res.ok) throw new Error(`Failed to load movies (${res.status})`);
+      if (!res.ok) {
+        throw new Error(`Failed to load movies (${res.status})`);
+      }
 
       const data = (await res.json()) as
         | MoviesPaginatedResponse
         | MoviesArrayResponse;
+
       const items = Array.isArray(data) ? data : data.items;
 
       if (!Array.isArray(items)) {
@@ -75,27 +78,27 @@ export default function App() {
 
       setMovies(items);
     } catch (err) {
-      console.error(err);
       setMovies([]);
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  }
+  }, [page, pageSize, source, normalizedAppliedSearch]);
 
   useEffect(() => {
-    // avoid StrictMode “double effect” weirdness causing race conditions
-    let ignore = false;
+    // Guard against state updates after unmount (dev StrictMode may re-run effects)
+    let cancelled = false;
 
     (async () => {
-      if (!ignore) await loadMovies();
+      if (!cancelled) {
+        await loadMovies();
+      }
     })();
 
     return () => {
-      ignore = true;
+      cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, source, normalizedAppliedSearch]);
+  }, [loadMovies]);
 
   function applySearch() {
     setAppliedSearch(searchText);
@@ -129,13 +132,13 @@ export default function App() {
     const title = newTitle.trim();
     const yearNum = Number(newYear);
 
-    // Simple validation
     if (!title) {
       setCreateError("Title is required.");
       return;
     }
+
     if (!Number.isFinite(yearNum) || yearNum < 1888 || yearNum > 2100) {
-      setCreateError("Year must be a valid number (1888–2100).");
+      setCreateError("Year must be between 1888 and 2100.");
       return;
     }
 
@@ -153,19 +156,14 @@ export default function App() {
         throw new Error(msg.error ?? `Create failed (${res.status})`);
       }
 
-      // Nice UX: show new local movies immediately
-      // Put user back on page 1 so they can see it (locals appear first in "all")
       setPage(1);
       setSource("all");
       setAppliedSearch("");
       setSearchText("");
 
       closeModal();
-
-      // reload list after state updates
       await loadMovies();
     } catch (err) {
-      console.error(err);
       setCreateError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setCreating(false);
@@ -174,28 +172,20 @@ export default function App() {
 
   return (
     <div className="min-vh-100 bg-light">
-      {/* Top bar */}
       <nav className="navbar navbar-dark bg-dark">
         <div className="container">
           <span className="navbar-brand fw-semibold">🎬 Movies</span>
-          <div className="d-flex align-items-center gap-2">
-            <button className="btn btn-sm btn-warning" onClick={openModal}>
-              + Add Local Movie
-            </button>
-            <span className="navbar-text small text-white-50">
-              React UI ↔ Express API
-            </span>
-          </div>
+          <button className="btn btn-sm btn-warning" onClick={openModal}>
+            + Add Local Movie
+          </button>
         </div>
       </nav>
 
       <div className="container py-4">
-        {/* Controls Card */}
         <div className="card shadow-sm mb-4">
           <div className="card-body">
             <div className="row g-3 align-items-end">
-              {/* Source */}
-              <div className="col-12 col-md-3">
+              <div className="col-md-3">
                 <label className="form-label">Source</label>
                 <select
                   className="form-select"
@@ -213,8 +203,7 @@ export default function App() {
                 </select>
               </div>
 
-              {/* Page size */}
-              <div className="col-12 col-md-3">
+              <div className="col-md-3">
                 <label className="form-label">Page size</label>
                 <select
                   className="form-select"
@@ -230,14 +219,13 @@ export default function App() {
                 </select>
               </div>
 
-              {/* Search */}
-              <div className="col-12 col-md-6">
+              <div className="col-md-6">
                 <label className="form-label">Search title</label>
                 <div className="input-group">
                   <input
                     className="form-control"
-                    placeholder="e.g. the, star, life..."
                     value={searchText}
+                    placeholder="Search by title..."
                     onChange={(e) => setSearchText(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") applySearch();
@@ -250,93 +238,41 @@ export default function App() {
                   <button
                     className="btn btn-outline-secondary"
                     onClick={clearSearch}
-                    disabled={!searchText && !appliedSearch}
                   >
                     Clear
                   </button>
                 </div>
-                <div className="form-text">
-                  Press <kbd>Enter</kbd> to search, <kbd>Esc</kbd> to clear.
-                </div>
-              </div>
-            </div>
-
-            {/* Status line */}
-            <div className="d-flex justify-content-between align-items-center mt-3">
-              <div className="text-muted small">
-                Showing <strong>{movies.length}</strong> result(s)
-                {normalizedAppliedSearch ? (
-                  <>
-                    {" "}
-                    for{" "}
-                    <span className="fw-semibold">
-                      “{normalizedAppliedSearch}”
-                    </span>
-                  </>
-                ) : null}
-              </div>
-
-              <div className="small text-muted">
-                Page <strong>{page}</strong>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="alert alert-danger" role="alert">
-            <strong>Error:</strong> {error}
-          </div>
-        )}
+        {error && <div className="alert alert-danger">{error}</div>}
 
-        {/* Movies list */}
         <div className="card shadow-sm">
-          <div className="card-header bg-white d-flex justify-content-between align-items-center">
-            <span className="fw-semibold">Movies</span>
+          <ul className="list-group list-group-flush">
             {loading ? (
-              <span className="badge text-bg-warning">Loading…</span>
-            ) : (
-              <span className="badge text-bg-dark">Ready</span>
-            )}
-          </div>
-
-          <div className="card-body p-0">
-            {loading ? (
-              <div className="p-4 d-flex align-items-center gap-3">
-                <div
-                  className="spinner-border"
-                  role="status"
-                  aria-label="Loading"
-                />
-                <div className="text-muted">Loading movies…</div>
-              </div>
+              <li className="list-group-item">Loading…</li>
             ) : movies.length === 0 ? (
-              <div className="p-4 text-muted">No movies found.</div>
+              <li className="list-group-item text-muted">No movies found.</li>
             ) : (
-              <ul className="list-group list-group-flush">
-                {movies.map((m) => (
-                  <li
-                    key={m.id}
-                    className="list-group-item d-flex justify-content-between align-items-center"
-                  >
-                    <div>
-                      <div className="fw-semibold">{m.title}</div>
-                      <div className="text-muted small">
-                        {m.year} • ID: {m.id}
-                      </div>
-                    </div>
-                    <span className={`badge ${sourceBadgeClass(m.source)}`}>
-                      {m.source}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              movies.map((m) => (
+                <li
+                  key={m.id}
+                  className="list-group-item d-flex justify-content-between"
+                >
+                  <div>
+                    <strong>{m.title}</strong> ({m.year})
+                  </div>
+                  <span className={`badge ${sourceBadgeClass(m.source)}`}>
+                    {m.source}
+                  </span>
+                </li>
+              ))
             )}
-          </div>
+          </ul>
 
-          {/* Pagination */}
-          <div className="card-footer bg-white d-flex justify-content-between align-items-center">
+          <div className="card-footer d-flex justify-content-between">
             <button
               className="btn btn-outline-dark"
               disabled={page === 1 || loading}
@@ -344,11 +280,6 @@ export default function App() {
             >
               ◀ Prev
             </button>
-
-            <span className="text-muted small">
-              Tip: changing filters resets to page 1
-            </span>
-
             <button
               className="btn btn-dark"
               disabled={loading}
@@ -358,95 +289,52 @@ export default function App() {
             </button>
           </div>
         </div>
-
-        <div className="text-center text-muted small mt-4">
-          Built with React + Express (TypeScript)
-        </div>
       </div>
 
-      {/* -------- Modal (Bootstrap, no JS dependency) -------- */}
       {showModal && (
         <>
-          {/* Backdrop */}
           <div className="modal-backdrop fade show" />
-
-          {/* Modal */}
-          <div
-            className="modal fade show"
-            style={{ display: "block" }}
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="modal-dialog modal-dialog-centered" role="document">
+          <div className="modal fade show" style={{ display: "block" }}>
+            <div className="modal-dialog modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header">
                   <h5 className="modal-title">Add Local Movie</h5>
-                  <button
-                    type="button"
-                    className="btn-close"
-                    aria-label="Close"
-                    onClick={closeModal}
-                    disabled={creating}
-                  />
+                  <button className="btn-close" onClick={closeModal} />
                 </div>
 
                 <div className="modal-body">
                   {createError && (
-                    <div className="alert alert-danger" role="alert">
-                      {createError}
-                    </div>
+                    <div className="alert alert-danger">{createError}</div>
                   )}
 
-                  <div className="mb-3">
-                    <label className="form-label">Title</label>
-                    <input
-                      className="form-control"
-                      value={newTitle}
-                      onChange={(e) => setNewTitle(e.target.value)}
-                      placeholder="e.g. My New Movie"
-                      autoFocus
-                      disabled={creating}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createLocalMovie();
-                        if (e.key === "Escape") closeModal();
-                      }}
-                    />
-                  </div>
+                  <input
+                    className="form-control mb-2"
+                    placeholder="Title"
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                  />
 
-                  <div className="mb-2">
-                    <label className="form-label">Year</label>
-                    <input
-                      className="form-control"
-                      value={newYear}
-                      onChange={(e) => setNewYear(e.target.value)}
-                      placeholder="e.g. 2024"
-                      disabled={creating}
-                      inputMode="numeric"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createLocalMovie();
-                        if (e.key === "Escape") closeModal();
-                      }}
-                    />
-                    <div className="form-text">Valid range: 1888–2100</div>
-                  </div>
+                  <input
+                    className="form-control"
+                    placeholder="Year"
+                    value={newYear}
+                    onChange={(e) => setNewYear(e.target.value)}
+                  />
                 </div>
 
                 <div className="modal-footer">
                   <button
-                    type="button"
                     className="btn btn-outline-secondary"
                     onClick={closeModal}
-                    disabled={creating}
                   >
                     Cancel
                   </button>
                   <button
-                    type="button"
                     className="btn btn-primary"
                     onClick={createLocalMovie}
                     disabled={creating}
                   >
-                    {creating ? "Creating..." : "Create"}
+                    {creating ? "Creating…" : "Create"}
                   </button>
                 </div>
               </div>

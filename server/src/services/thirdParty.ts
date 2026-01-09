@@ -8,8 +8,6 @@ const BASE_URL = "https://jsonfakery.com/movies";
 /**
  * This describes the shape we expect from the third-party API.
  * We don't type every field, only what we actually use.
- *
- * Why: We want to stay flexible if the API includes extra fields we don't care about.
  */
 type ThirdPartyMovie = {
   movie_id: number;
@@ -25,8 +23,8 @@ type ThirdPartyMovie = {
 function normalizeThirdPartyMovie(raw: ThirdPartyMovie): Movie {
   const title = raw.original_title ?? raw.title ?? "Untitled";
 
-  // Year extraction.
-  // If parsing fails, we fallback to a safe default year
+  // Year extraction:
+  // If parsing fails or release_date is missing, year=0 means "unknown".
   let year = 0;
   if (raw.release_date) {
     const parsed = new Date(raw.release_date);
@@ -44,7 +42,6 @@ function normalizeThirdPartyMovie(raw: ThirdPartyMovie): Movie {
 /**
  * Fetch a page of movies from the third-party paginated endpoint.
  */
-
 export async function fetchThirdPartyMoviesPage(
   page: number
 ): Promise<Movie[]> {
@@ -55,11 +52,10 @@ export async function fetchThirdPartyMoviesPage(
     throw new Error(`Third-party fetch failed: ${res.status}`);
   }
 
-  // Third-party response looks like:
-  // { current_page: number, data: ThirdPartyMovie[] , ... }
-  const payload = (await res.json()) as { data: ThirdPartyMovie[] };
+  const payload = (await res.json()) as { data?: ThirdPartyMovie[] };
 
-  return payload.data.map(normalizeThirdPartyMovie);
+  const data = Array.isArray(payload.data) ? payload.data : [];
+  return data.map(normalizeThirdPartyMovie);
 }
 
 /**
@@ -73,8 +69,8 @@ export async function fetchThirdPartyRandom(count: number): Promise<Movie[]> {
     throw new Error(`Third-party random fetch failed: ${res.status}`);
   }
 
-  // Third-party response is an array of movies
   const payload = (await res.json()) as ThirdPartyMovie[];
 
-  return payload.map(normalizeThirdPartyMovie);
+  const data = Array.isArray(payload) ? payload : [];
+  return data.map(normalizeThirdPartyMovie);
 }

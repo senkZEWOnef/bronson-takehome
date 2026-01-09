@@ -44,7 +44,7 @@ router.get("/random/:count", async (req, res) => {
  *
  * Query:
  * - page (default 1)
- * - pageSize (default 12)
+ * - pageSize (default 25)
  * - source: all | local | third_party (default all)
  * - search: string (optional, filters by title contains search)
  */

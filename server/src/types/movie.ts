@@ -1,7 +1,9 @@
 /**
- * This represents the general type of a movie regardless
- * of where it comes from, local or third party.
- * will start simple but with room to grow
+ * Represents the normalized Movie type,
+ * regardless of whether the data comes from a local source
+ * or a third-party API.
+ *
+ * Designed to be simple, with room to grow.
  */
 
 export type Movie = {
